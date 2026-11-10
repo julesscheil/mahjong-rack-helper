@@ -12,15 +12,16 @@
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+<div class="cbar" id="cbar" aria-hidden="true"><div class="mini" id="cbarTiles"></div></div>
 <main>
 <header>
   <h1>🀄 Charles</h1>
-  <div class="btns"><button class="pill" id="openRules">📖 Rules</button><button class="pill" id="openCard">🃏 Card</button></div>
+  <div class="btns"><button class="pill" id="openRules">📖 Rules</button><button class="pill" id="openCard">🃏 Card</button><button class="pill q1" id="openHelp" aria-label="How to use">?</button></div>
 </header>
 
 <section class="rackbox">
   <div class="hd"><h2>Rack <span class="count" id="count">0</span></h2>
-    <div class="btns"><button class="pill sm accent" id="deal">🎲 Practice</button><button class="pill sm" id="undo" aria-label="Undo">↩︎</button><button class="pill sm" id="clear">Clear</button></div></div>
+    <div class="btns"><button class="pill sm accent" id="deal">🎲 Practice</button><button class="pill sm" id="sortBtn" hidden>Sort</button><button class="pill sm" id="clear">Clear</button></div></div>
   <div class="rack" id="rack"></div>
   <div class="exposed" id="exposed" hidden></div>
 </section>

@@ -67,12 +67,18 @@ function saveCard(text){
 let cardText = load(STORE_CARD) || load(STORE_CARD_BAK) || SAMPLE;
 if (!isSample(cardText)) persistStorage();
 let rack = []; try { rack = JSON.parse(load(STORE_RACK) || '[]'); } catch(e){ rack = []; }
+// Rack order: auto-sorted until you drag a tile; then your order is kept until Sort (or Practice/Clear)
+const STORE_MANUAL = 'mj-rack-manual-v1';
+let manualOrder = load(STORE_MANUAL) === '1';
+// Add a tile: sorted mode re-sorts in render; manual mode drops it after its twin, else at the end
+function addToRack(id){
+  const k = manualOrder ? rack.lastIndexOf(id) : -1;
+  if (k >= 0) rack.splice(k + 1, 0, id); else rack.push(id);
+}
 // Called groups on the table: [{tile, size, jokers}]
 let exposed = []; try { exposed = JSON.parse(load(STORE_EXP) || '[]'); if (!Array.isArray(exposed)) exposed = []; } catch(e){ exposed = []; }
 let hands = parseCard(cardText).hands;
-let history = [], showAll = false, last = null;
-// Undo restores the rack and exposures together
-const snapshot = () => history.push({ rack: [...rack], exposed: exposed.map(e=>({...e})) });
+let showAll = false, last = null;
 const exposedCount = () => exposed.reduce((s,e)=>s+e.size, 0);
 // Tiles of each kind already on the table (exposures), for the 4-of-each limit
 function exposedTiles(){ const c = {}; for (const e of exposed){ c[e.tile]=(c[e.tile]||0)+e.size-e.jokers; c.J=(c.J||0)+e.jokers; } return c; }
@@ -262,6 +268,24 @@ function openCard(){
 document.getElementById('openRules').onclick = ()=>openRules();
 document.getElementById('openCard').onclick = openCard;
 
+// How to use: short steps, one icon each. Auto-opens once on the first visit.
+const HELP = [
+  ['🃏', '<b>Load your card:</b> tap Card, then Import file (or paste). Once per device.'],
+  ['🀄', '<b>Build your rack:</b> tap tiles below it. <b>Double tap</b> a rack tile to remove it. 🎲 Practice deals a hand.'],
+  ['↔️', '<b>Arrange:</b> drag rack tiles into any order. <b>Sort</b> puts them back in order.'],
+  ['➜', '<b>Pass:</b> the outlined tiles are the suggested pass. Tap a tile’s <b>?</b> to see why.'],
+  ['⭐', '<b>Keep:</b> the small tiles next to Pass are your most useful ones.'],
+  ['📊', '<b>Lean toward:</b> bars show the sections you’re closest to. Tap one to focus it.'],
+  ['🎯', '<b>Closest hands:</b> the card hands you’re nearest to. Tap one to see which tiles you still need.'],
+  ['📣', '<b>Call?:</b> not sure about calling a discard? Tap it, then tap the tile to find out if it’s useful. It doesn’t know what’s already been discarded.'],
+  ['📖', '<b>Rules:</b> quick reminders for jokers, calling and the Charleston.'],
+];
+const STORE_HELP = 'mj-seen-help-v1';
+function openHelp(){
+  openSheet('How to use', `<ul class="steps">${HELP.map(([i,t])=>`<li><span class="ic">${i}</span><span>${t}</span></li>`).join('')}</ul>`);
+}
+document.getElementById('openHelp').onclick = openHelp;
+
 // Compact 4-row tile grid (Bam, Crak, Dot, honors), shared by the picker and the Call? sheet
 function tileGrid(withJoker=true){
   const rows = [
@@ -301,8 +325,10 @@ function updateCardBtn(){
 }
 function render(){
   updateCardBtn();
-  rack.sort((a,b)=>ord(a)-ord(b));
+  if (!manualOrder) rack.sort((a,b)=>ord(a)-ord(b));
   save(STORE_RACK, JSON.stringify(rack));
+  save(STORE_MANUAL, manualOrder ? '1' : '0');
+  document.getElementById('sortBtn').hidden = !(manualOrder && rack.length > 1);
   save(STORE_EXP, JSON.stringify(exposed));
   const xp = exposedCount(), total = rack.length + xp, onTable = exposedTiles();
   document.getElementById('count').textContent = rack.length;
@@ -317,9 +343,9 @@ function render(){
   const newIdx = fx && fx.type==='add' ? rack.lastIndexOf(fx.id) : -1;
   const dealing = fx && fx.type==='deal';
   fx = null;
-  const sig = JSON.stringify([rack, exposed, cardText]);
+  const sig = JSON.stringify([[...rack].sort(), exposed, cardText]); // order-insensitive: dragging keeps focus
   if (sig !== focusSig) { focusSection = null; focusSig = sig; }
-  // Which top sections use each tile copy (copies line up with the sorted rack), for tap-to-focus
+  // Which top sections use each tile copy (copies line up with the rack as displayed), for tap-to-focus
   const heat = res && res.heat.sections.length ? res.heat : null;
   document.getElementById('rack').innerHTML =
     rack.map((t,i)=>{ let extra='', inner=''; if(marks[t]){extra='pass';marks[t]--; if (playing) inner='<span class="dl">discard</span>';}
@@ -328,13 +354,19 @@ function render(){
       return tileHTML(t,extra,inner).replace('class="tile',`data-i="${i}" data-secs="${secs}" style="--i:${i}" class="tile`); }).join('')
     + '<div class="slot"></div>'.repeat(Math.max(0, 14 - total))
     + (total ? '' : `<span class="empty">${hands.length ? 'Tap tiles below, or 🎲 Practice' : 'Add your card first (top right)'}</span>`);
+  // Compact rack (sticky on phones): same tiles, pass outlines and focus data as the full rack
+  document.getElementById('cbarTiles').innerHTML = [...document.querySelectorAll('#rack .tile[data-i]')].map(el=>{
+    const pass = el.classList.contains('pass') ? 'pass' : '';
+    return tileHTML(el.dataset.t, pass).replace('class="tile',`data-i="${el.dataset.i}" data-secs="${el.dataset.secs}" class="tile`);
+  }).join('');
+  updateCbar();
 
   document.querySelectorAll('#picker .tile').forEach(el=>{
     const id = el.dataset.t;
     el.classList.toggle('maxed', total >= 14 || (counts[id]||0) + (onTable[id]||0) >= maxOf(id));
   });
 
-  // Exposed groups: mini tiles, separate from the concealed rack. Undo is the way back.
+  // Exposed groups: mini tiles, separate from the concealed rack.
   const expEl = document.getElementById('exposed');
   expEl.hidden = !playing;
   expEl.innerHTML = playing ? `<span class="lbl">Exposed</span>${exposed.map(e=>
@@ -389,8 +421,8 @@ function render(){
 function applyFocus(){
   const k = last && last.heat ? last.heat.sections.findIndex(x=>x.section===focusSection) : -1;
   if (k < 0) focusSection = null;
-  document.querySelectorAll('#rack .tile').forEach(el=>{
-    const secs = el.dataset.secs;
+  document.querySelectorAll('#rack .tile[data-i], #cbarTiles .tile').forEach(el=>{
+    const secs = el.dataset.secs || '';
     el.classList.toggle('unfocused', k >= 0 && secs !== 'any' && !secs.split(' ').includes(String(k)));
   });
   document.querySelectorAll('#lean button.leanrow').forEach(b=>{
@@ -422,7 +454,7 @@ function celebrate(){
 
 function coachTips(res){
   const best = res.results[0], tips = [];
-  if (!best) return exposed.length ? ['No hand on your card fits what you’ve exposed. Undo if that was a mistake.'] : [];
+  if (!best) return exposed.length ? ['No hand on your card fits what you’ve exposed. Clear to start over if that was a mistake.'] : [];
   if (res.flexible >= 4) tips.push(`${res.flexible} hands are within 2 tiles of your best. Stay flexible.`);
   else if (res.flexible <= 2 && best.missing <= 6) tips.push(`Only ${res.flexible===1?'one hand is':'a couple of hands are'} close. Start committing to <b>${esc(best.hand.section)}</b>.`);
   if (res.jokers >= 2) tips.push(`${res.jokers} jokers: favor hands with big groups.`);
@@ -499,8 +531,7 @@ function showVerdict(tile, oi=0){
 
 // Record the call: Mah Jongg takes the tile; an exposure moves its naturals and jokers out of the rack
 function recordCall(tile, e){
-  snapshot();
-  if (!e) rack.push(tile);
+  if (!e) addToRack(tile);
   else {
     for (let i=0;i<e.naturals-1;i++) rack.splice(rack.indexOf(tile), 1);
     for (let i=0;i<e.jokers;i++) rack.splice(rack.indexOf('J'), 1);
@@ -516,13 +547,84 @@ document.getElementById('picker').addEventListener('click', e=>{
   if (rack.length + exposedCount() >= 14 || rack.filter(x=>x===id).length + (exposedTiles()[id]||0) >= maxOf(id)) {
     t.classList.remove('nope'); void t.offsetWidth; t.classList.add('nope'); return;
   }
-  snapshot(); rack.push(id); fx = {type:'add', id}; render();
+  addToRack(id); fx = {type:'add', id}; render();
 });
-document.getElementById('rack').addEventListener('click', e=>{
+// Drag a rack tile to rearrange (a double tap removes it). Moving past a few px turns the press into a drag.
+const rackEl = document.getElementById('rack');
+let drag = null, justDragged = false;
+rackEl.addEventListener('pointerdown', e=>{
+  const t = e.target.closest('.tile[data-i]'); if (!t || removing || (e.button && e.button !== 0)) return;
+  drag = { el: t, id: e.pointerId, x: e.clientX, y: e.clientY, on: false };
+});
+window.addEventListener('pointermove', e=>{
+  if (!drag || e.pointerId !== drag.id) return;
+  const el = drag.el;
+  if (!drag.on){
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return;
+    drag.on = true;
+    const r = el.getBoundingClientRect(); drag.gx = drag.x - r.left; drag.gy = drag.y - r.top;
+    el.classList.add('dragging'); rackEl.classList.add('sorting');
+  }
+  e.preventDefault();
+  // Swap into the slot of the nearest other tile once the finger is over it
+  const tiles = [...rackEl.querySelectorAll('.tile[data-i]')];
+  let best = null, bd = Infinity;
+  for (const o of tiles){ if (o === el) continue;
+    const r = o.getBoundingClientRect(), d = Math.hypot(e.clientX-(r.left+r.width/2), e.clientY-(r.top+r.height/2));
+    if (d < bd){ bd = d; best = o; } }
+  if (best && bd < best.offsetWidth * 0.6){
+    if (tiles.indexOf(best) > tiles.indexOf(el)) best.after(el); else best.before(el);
+  }
+  // Keep the tile under the finger wherever its slot now is
+  el.style.transform = 'none';
+  const r = el.getBoundingClientRect();
+  el.style.transform = `translate(${e.clientX-drag.gx-r.left}px,${e.clientY-drag.gy-r.top}px) scale(1.08)`;
+}, { passive: false });
+function endDrag(e, commit){
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag; drag = null;
+  if (!d.on) return;
+  justDragged = true; setTimeout(()=>{ justDragged = false; }, 0);
+  rackEl.classList.remove('sorting');
+  const order = [...rackEl.querySelectorAll('.tile[data-i]')].map(t=>rack[+t.dataset.i]);
+  if (commit && order.join() !== rack.join()){ rack = order; manualOrder = true; }
+  render();
+}
+window.addEventListener('pointerup', e=>endDrag(e, true));
+window.addEventListener('pointercancel', e=>endDrag(e, false));
+document.getElementById('sortBtn').onclick = ()=>{ if (manualOrder){ manualOrder = false; render(); } };
+// Double tap removes a rack tile; a single tap just "arms" it briefly so a stray tap can't delete
+const DOUBLE_MS = 350;
+let lastTap = null;
+function isDoubleTap(where, t){
+  const now = Date.now(), i = t.dataset.i;
+  const hit = lastTap && lastTap.where === where && lastTap.i === i && now - lastTap.at < DOUBLE_MS;
+  document.querySelectorAll('.tile.armed').forEach(x=>x.classList.remove('armed'));
+  if (hit){ lastTap = null; return true; }
+  lastTap = { where, i, at: now };
+  t.classList.add('armed'); setTimeout(()=>t.classList.remove('armed'), DOUBLE_MS);
+  return false;
+}
+rackEl.addEventListener('click', e=>{
+  if (justDragged) return;
   const t = e.target.closest('.tile'); if(!t || t.dataset.i===undefined || removing) return;
+  if (!isDoubleTap('rack', t)) return;
   removing = true; t.classList.add('out');
-  setTimeout(()=>{ snapshot(); rack.splice(+t.dataset.i,1); removing = false; render(); }, 130);
+  setTimeout(()=>{ rack.splice(+t.dataset.i,1); removing = false; render(); }, 130);
 });
+// Compact rack: double tap removes, same as the full rack
+document.getElementById('cbarTiles').addEventListener('click', e=>{
+  const t = e.target.closest('.tile[data-i]'); if (!t || removing) return;
+  if (!isDoubleTap('cbar', t)) return;
+  rack.splice(+t.dataset.i, 1); render();
+});
+// Show the compact rack once the full rack has scrolled up out of view (CSS limits it to ≤600px)
+let rackOff = false;
+function updateCbar(){ document.getElementById('cbar').classList.toggle('on', rackOff && rack.length > 0); }
+if ('IntersectionObserver' in window){
+  new IntersectionObserver(([en])=>{ rackOff = !en.isIntersecting && en.boundingClientRect.top < 0; updateCbar(); })
+    .observe(document.querySelector('.rackbox'));
+}
 document.getElementById('pass').addEventListener('click', e=>{
   const t = e.target.closest('.tile'); if(!t||!last) return;
   const p = last.pass[+t.dataset.p];
@@ -550,9 +652,9 @@ function dealHand(){
   for (let i=wall.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [wall[i],wall[j]]=[wall[j],wall[i]]; }
   return wall.slice(0,13);
 }
-document.getElementById('deal').onclick = ()=>{ snapshot(); rack = dealHand(); exposed = []; fx = {type:'deal'}; render(); };
-document.getElementById('undo').onclick = ()=>{ if(history.length){ const h = history.pop(); rack = h.rack; exposed = h.exposed; render(); } };
-document.getElementById('clear').onclick = ()=>{ if(rack.length || exposed.length){ snapshot(); rack=[]; exposed=[]; render(); } };
+document.getElementById('deal').onclick = ()=>{ rack = dealHand(); exposed = []; manualOrder = false; fx = {type:'deal'}; render(); };
+document.getElementById('clear').onclick = ()=>{ if(rack.length || exposed.length){ rack=[]; exposed=[]; manualOrder = false; render(); } };
 document.getElementById('callBtn').onclick = openCall;
 
 buildPicker(); render();
+if (!load(STORE_HELP)) { openHelp(); save(STORE_HELP, '1'); }
