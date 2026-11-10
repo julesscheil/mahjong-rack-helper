@@ -175,6 +175,8 @@ function openCard(){
     <textarea id="cardText" spellcheck="false">${esc(cardText)}</textarea>
     <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
       <button class="pill accent" id="saveCard">Save</button>
+      <button class="pill" id="importBtn">Import file</button>
+      <input type="file" id="importFile" accept=".txt,text/plain" hidden>
       <button class="pill" id="sampleCard">Sample</button>
       <button class="pill" id="fmtBtn">Format help</button></div>
     <div id="cardMsg"></div>
@@ -188,6 +190,24 @@ function openCard(){
   const msg = ()=>{ const {hands:h, errors} = parseCard(ta.value);
     document.getElementById('cardMsg').innerHTML = (errors.length?`<div class="err">${errors.map(esc).join('<br>')}</div>`:'')+`<div class="ok">${h.length} hands read</div>`; };
   msg(); ta.oninput = msg;
+  const fileIn = document.getElementById('importFile');
+  document.getElementById('importBtn').onclick = ()=>fileIn.click();
+  fileIn.onchange = ()=>{
+    const f = fileIn.files && fileIn.files[0]; if (!f) return;
+    const rd = new FileReader();
+    rd.onload = ()=>{
+      ta.value = String(rd.result || '');
+      const {hands:h, errors} = parseCard(ta.value);
+      if (h.length) { cardText = ta.value; hands = h; save(STORE_CARD, cardText); render(); }
+      msg();
+      document.getElementById('cardMsg').insertAdjacentHTML('afterbegin',
+        h.length ? `<div class="ok"><b>Imported ${esc(f.name)}</b>: ${h.length} hands saved</div>`
+                 : `<div class="err">No hands found in ${esc(f.name)}</div>`);
+    };
+    rd.onerror = ()=>{ document.getElementById('cardMsg').innerHTML = '<div class="err">Couldn’t read that file</div>'; };
+    rd.readAsText(f);
+    fileIn.value = '';
+  };
   document.getElementById('fmtBtn').onclick = ()=>{ const f=document.getElementById('fmt'); f.hidden=!f.hidden; };
   document.getElementById('sampleCard').onclick = ()=>{ ta.value = SAMPLE; msg(); };
   document.getElementById('saveCard').onclick = ()=>{ cardText = ta.value; hands = parseCard(cardText).hands; save(STORE_CARD, cardText); closeSheet(); render(); };
