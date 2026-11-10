@@ -71,6 +71,91 @@ function tileHTML(id, extra='', inner='') {
 }
 const ORDER = [...['B','C','D'].flatMap(s=>[1,2,3,4,5,6,7,8,9].map(n=>s+n)),'GD','RD','WD','N','E','W','S','F','J'];
 const ord = t => ORDER.indexOf(t);
+const SUIT_FULL = {B:'Bam', C:'Crak', D:'Dot'};
+const DRAGON_NAME = {GD:'Green', RD:'Red', WD:'Soap'};
+const COLOR_NAME = {g:'Green', r:'Red', k:'Black'};
+
+// Which printed color each suit letter has on the card line
+function colorMap(altText){
+  const vars = [...new Set((altText.match(/[abc](?=\s|$)/g) || []))];
+  if (vars.length <= 1) return {a:'k', b:'k', c:'k', z:'k'};
+  return {a:'g', b:'r', c:'k', z:'k'};
+}
+
+// The line as printed on the card, in its colors
+function printedHTML(h, ai){
+  const t = h.altTexts[h.printedIdx[ai]];
+  const cm = colorMap(t);
+  return `<span class="printed">${t.split(/\s+/).map(tok=>{
+    const m = tok.match(/[abcz]$/);
+    return `<span class="c${m?cm[m[0]]:'k'}">${esc(plainText(tok))}</span>`;
+  }).join(' ')}</span>`;
+}
+
+// The line with your actual numbers / wind filled in, e.g. 1234 DDD → 3456 DDD
+function concreteText(altText, v){
+  return altText.split(/\s+/).map(tok=>tok.replace(/[abcz]$/,'')
+    .replace(/[1-9]/g, d=>String((v.numMap||{})[d] ?? d))
+    .replace(/Q/g, v.q || 'N')).join(' ');
+}
+
+// Break a card note into clauses: "Any 4 Consec. Nos. in Any 1 Suit, Any 3 Dragons"
+// -> ["Any 4 Consec. Nos.", "Any 1 Suit", "Any 3 Dragons"]
+function noteClauses(note){
+  return (note||'').split(/,\s+(?!or\b)(?=[A-Za-z])|\s+in\s+|\s+w\s+/i).map(s=>s.trim()).filter(Boolean);
+}
+function findClause(clauses, re){ return clauses.find(c=>re.test(c)); }
+function because(...cs){
+  const list = [...new Set(cs.filter(Boolean))];
+  return list.length ? ` <span class="because">${list.map(c=>`“${esc(c)}”`).join(' + ')}</span>` : '';
+}
+
+// Why this concrete version counts, each reason tied to the part of the note that allows it
+function whyList(h, v){
+  const out = [];
+  const cl = noteClauses(h.note);
+  const numClause = findClause(cl, /consec|like|nos\.?|odd|even|run/i);
+  const optClause = findClause(cl, /kong|pair/i);
+  const suitClause = findClause(cl, /suit/i);
+  const dragonClause = findClause(cl, /dragon|\bDs\b/i);
+  const windClause = findClause(cl, /wind/i);
+
+  const actual = h.altTexts[v.ai], printedI = h.printedIdx[v.ai];
+  const derived = printedI !== v.ai;
+  const moved = Object.entries(v.numMap||{}).filter(([d,n])=>+d!==n);
+  const yours = concreteText(actual, v), printed = plainText(h.altTexts[printedI]);
+  if (yours !== printed)
+    out.push(`You’d play it as <b>${esc(yours)}</b> instead of <b>${esc(printed)}</b>` +
+      because(derived ? optClause : null, moved.length ? numClause : null, v.q ? windClause : null));
+
+  const cm = colorMap(h.altTexts[printedI]);
+  const toks = actual.split(/\s+/);
+  const vars = [...new Set((actual.match(/[abc](?=\s|$)/g) || []))].sort();
+  const varHasNums = x => toks.some(t => t.endsWith(x) && /[1-9]/.test(t));
+  const varHasDragon = x => toks.some(t => t.endsWith(x) && /D/.test(t));
+  const DR = {B:'GD', C:'RD', D:'WD'};
+  const desc = x => varHasNums(x) ? `<b>${SUIT_FULL[v.suitMap[x]]}</b>` : `<b>${DRAGON_NAME[DR[v.suitMap[x]]]} dragon</b>`;
+  const anyNums = vars.some(varHasNums), anyDr = vars.some(varHasDragon);
+  const suitBecause = because(anyNums ? suitClause : null, anyDr ? dragonClause : null);
+  if (vars.length === 1) out.push((varHasNums(vars[0]) ? `All in ${desc(vars[0])}` : `Dragon: ${desc(vars[0])}`) + suitBecause);
+  else if (vars.length > 1) out.push(vars.map(x=>`${COLOR_NAME[cm[x]]} = ${desc(x)}`).join(' · ') + suitBecause);
+
+  if (/z(?=\s|$)/.test(actual)) {
+    const zTok = toks.find(t=>/z$/.test(t));
+    out.push(/[1-9]/.test(zTok)
+      ? `Numbers in <b>${SUIT_FULL[v.suitMap.z]}</b>` + because(suitClause)
+      : `Dragon: <b>${DRAGON_NAME[DR[v.suitMap.z]]}</b>` + because(dragonClause));
+  }
+  if (v.q) out.push(`Wind: <b>${tileLabel(v.q)}</b>` + because(windClause));
+  if (moved.length) {
+    const deltas = [...new Set(moved.map(([d,n])=>n-d))];
+    out.push((deltas.length===1 && Object.keys(v.numMap).length===moved.length
+      ? `Numbers moved ${deltas[0]>0?'up':'down'} ${Math.abs(deltas[0])}`
+      : 'Numbers: ' + moved.map(([d,n])=>`${d}→<b>${n}</b>`).join(' · ')) + because(numClause));
+  }
+  return out;
+}
+
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 // ---- sheet ----
@@ -95,8 +180,9 @@ function openCard(){
     <div id="cardMsg"></div>
     <div class="help" id="fmt" hidden style="margin-top:10px">
       One hand per line · <code># Section</code> starts a section<br>
-      <code>1–9</code> + suit <code>a</code>/<code>b</code>/<code>c</code> · <code>0</code> Soap · <code>D</code> matching dragon · <code>R</code>/<code>G</code> · <code>NEWS</code> · <code>F</code><br>
-      After <code>|</code>: points, <code>X</code>/<code>C</code>, <code>shift</code> (any run or like number), <code>shift2</code> (odd/even runs)<br>
+      <code>1–9</code> + suit <code>a</code>/<code>b</code>/<code>c</code> (different suits) or <code>z</code> (any suit) · <code>0</code> Soap · <code>D</code> dragon of that suit · <code>R</code>/<code>G</code> · <code>NEWS</code> · <code>Q</code> any wind · <code>F</code><br>
+      Alternatives: <code>pattern or pattern</code><br>
+      After <code>|</code>: points, <code>X</code>/<code>C</code>, <code>shift</code> (any run or like number), <code>shift2</code> (odd/even), <code>free</code> (any different numbers)<br>
       e.g. <code>FF 222a 4444b 666c 88a | 25 X</code></div>`);
   const ta = document.getElementById('cardText');
   const msg = ()=>{ const {hands:h, errors} = parseCard(ta.value);
@@ -166,7 +252,7 @@ function render(){
   document.getElementById('hands').innerHTML = list.map((r,i)=>{
     const {v,s} = r.variants[0];
     const hasTips = handTips(r.hand, s).length;
-    return `<button class="hand" data-h="${i}"><div class="top"><b>${esc(r.hand.section)}${hasTips?'<span class="dot"></span>':''}</b><span>${r.missing} away</span></div>${miniHand(v,counts)}</button>`;
+    return `<button class="hand" data-h="${i}"><div class="top"><b>${esc(r.hand.section)}${hasTips?'<span class="dot"></span>':''}</b><span>${r.missing} away</span></div><div class="line">${printedHTML(r.hand, v.ai)}${(()=>{const y=concreteText(r.hand.altTexts[v.ai], v), p=plainText(r.hand.altTexts[r.hand.printedIdx[v.ai]]); return y!==p?` <span class="yours">→ ${esc(y)}</span>`:'';})()}</div>${miniHand(v,counts)}</button>`;
   }).join('');
   document.getElementById('moreBtn').textContent = showAll ? 'Show less' : 'Show more';
   document.getElementById('moreBtn').hidden = res.results.length <= 3;
@@ -203,9 +289,11 @@ document.getElementById('hands').addEventListener('click', e=>{
   const r = last.results[+b.dataset.h], {v,s} = r.variants[0], h = r.hand;
   const counts = {}; rack.forEach(t=>counts[t]=(counts[t]||0)+1);
   const meta = [h.points!=null?h.points+' pts':null, h.concealed?'Concealed':'Exposed', r.missing+' away'].filter(Boolean).join(' · ');
-  const tips = handTips(h, s);
-  openSheet(h.section, `<p style="margin-top:0"><code>${esc(h.text)}</code><br><span class="help">${meta}${r.variants.length>1?` · ${r.variants.length} ways to make it`:''}</span></p>
-    ${miniHand(v,counts)}<p class="help">Faded tiles are the ones you still need.</p>${tips.length?`<ul>${tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}`);
+  const tips = handTips(h, s), why = whyList(h, v);
+  openSheet(h.section, `<div class="cardline">${printedHTML(h, v.ai)}${h.note?`<div class="noteline">(${esc(h.note)})</div>`:''}<div class="help">${meta}</div></div>
+    <div class="lbl2">Your version</div>${miniHand(v,counts)}<div class="help" style="margin-top:4px">Faded = still needed</div>
+    ${why.length?`<div class="lbl2">Why it counts</div><ul>${why.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}
+    ${tips.length?`<div class="lbl2">Tips</div><ul>${tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}`);
 });
 document.getElementById('tipBtn').onclick = ()=>{ if(last) openSheet('Tip', `<ul>${coachTips(last).map(t=>`<li>${t}</li>`).join('')}</ul>`); };
 document.getElementById('moreBtn').onclick = ()=>{ showAll=!showAll; render(); };
