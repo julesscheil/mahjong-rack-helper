@@ -78,7 +78,8 @@ function tileHTML(id, extra='', inner='') {
   else {cls=id[0];n=id[1];s=SUIT_SHORT[id[0]];}
   return `<div class="tile ${cls} ${extra}" data-t="${id}"><span class="n">${n}</span><span class="s">${s}</span>${inner}</div>`;
 }
-const ORDER = [...['B','C','D'].flatMap(s=>[1,2,3,4,5,6,7,8,9].map(n=>s+n)),'GD','RD','WD','N','E','W','S','F','J'];
+// Rack order: each suit 1–9 followed by its dragon (Bam→Green, Crak→Red, Dot→Soap), then winds, flowers, jokers on the right
+const ORDER = [...[['B','GD'],['C','RD'],['D','WD']].flatMap(([s,d])=>[...[1,2,3,4,5,6,7,8,9].map(n=>s+n), d]),'N','E','W','S','F','J'];
 const ord = t => ORDER.indexOf(t);
 const SUIT_FULL = {B:'Bam', C:'Crak', D:'Dot'};
 const DRAGON_NAME = {GD:'Green', RD:'Red', WD:'Soap'};
@@ -284,7 +285,7 @@ function render(){
 
   // Charleston: outline the 3 passes. After a call: outline the discard, only while you hold 14.
   const marks = {};
-  if (res && (!playing || total >= 14)) res.pass.forEach(p=>marks[p.tile]=(marks[p.tile]||0)+1);
+  if (res && total >= 13 && (!playing || total >= 14)) res.pass.forEach(p=>marks[p.tile]=(marks[p.tile]||0)+1);
   const newIdx = fx && fx.type==='add' ? rack.lastIndexOf(fx.id) : -1;
   const dealing = fx && fx.type==='deal';
   fx = null;
@@ -308,6 +309,8 @@ function render(){
   document.getElementById('callBtn').hidden = !(hands.length && rack.length);
   document.getElementById('deal').hidden = total > 0; // Practice only on a clear board
   document.getElementById('passLbl').textContent = playing ? 'Discard' : 'Pass';
+  // Pass / Discard only once the whole hand is in (13, or 14 for East); exposed tiles count
+  document.getElementById('passbox').hidden = total < 13;
 
   document.getElementById('results').hidden = !res;
   if (!res) { prevPass = ''; prevBars = {}; wasMahj = false; return; }
