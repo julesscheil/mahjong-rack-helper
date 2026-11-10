@@ -52,8 +52,20 @@ const RULES = {
 const STORE_CARD = 'mj-card-v1', STORE_RACK = 'mj-rack-v1', STORE_EXP = 'mj-exposed-v1';
 function load(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
 function save(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+// Backup of the last real (non-sample) card, so Sample → Save or a bad edit can be undone
+const STORE_CARD_BAK = 'mj-card-backup-v1';
+// Sample detection that survives line-ending/whitespace changes and older saved copies of the sample
+const normCard = t => String(t||'').replace(/\r\n?/g,'\n').split('\n').map(l=>l.trim()).filter(Boolean).join('\n');
+const isSample = t => { const n = normCard(t); return n === normCard(SAMPLE) || /^#\s*sample card\b/i.test(n); };
+// Ask the browser not to evict our storage (best effort; ignored where unsupported)
+function persistStorage(){ try { navigator.storage && navigator.storage.persist && navigator.storage.persist().catch(()=>{}); } catch(e){} }
+function saveCard(text){
+  save(STORE_CARD, text);
+  if (text.trim() && !isSample(text) && parseCard(text).hands.length){ save(STORE_CARD_BAK, text); persistStorage(); }
+}
 
-let cardText = load(STORE_CARD) || SAMPLE;
+let cardText = load(STORE_CARD) || load(STORE_CARD_BAK) || SAMPLE;
+if (!isSample(cardText)) persistStorage();
 let rack = []; try { rack = JSON.parse(load(STORE_RACK) || '[]'); } catch(e){ rack = []; }
 // Called groups on the table: [{tile, size, jokers}]
 let exposed = []; try { exposed = JSON.parse(load(STORE_EXP) || '[]'); if (!Array.isArray(exposed)) exposed = []; } catch(e){ exposed = []; }
@@ -210,6 +222,7 @@ function openCard(){
       <button class="pill" id="importBtn">Import file</button>
       <input type="file" id="importFile" accept=".txt,text/plain" hidden>
       <button class="pill" id="sampleCard">Sample</button>
+      ${(()=>{ const b = load(STORE_CARD_BAK); return b && b !== cardText ? '<button class="pill" id="restoreCard">Restore my card</button>' : ''; })()}
       <button class="pill" id="fmtBtn">Format help</button></div>
     <div id="cardMsg"></div>
     <div class="help" id="fmt" hidden style="margin-top:10px">
@@ -230,7 +243,7 @@ function openCard(){
     rd.onload = ()=>{
       ta.value = String(rd.result || '');
       const {hands:h, errors} = parseCard(ta.value);
-      if (h.length) { cardText = ta.value; hands = h; save(STORE_CARD, cardText); render(); }
+      if (h.length) { cardText = ta.value; hands = h; saveCard(cardText); render(); }
       msg();
       document.getElementById('cardMsg').insertAdjacentHTML('afterbegin',
         h.length ? `<div class="ok"><b>Imported ${esc(f.name)}</b>: ${h.length} hands saved</div>`
@@ -242,7 +255,9 @@ function openCard(){
   };
   document.getElementById('fmtBtn').onclick = ()=>{ const f=document.getElementById('fmt'); f.hidden=!f.hidden; };
   document.getElementById('sampleCard').onclick = ()=>{ ta.value = SAMPLE; msg(); };
-  document.getElementById('saveCard').onclick = ()=>{ cardText = ta.value; hands = parseCard(cardText).hands; save(STORE_CARD, cardText); closeSheet(); render(); };
+  const restoreBtn = document.getElementById('restoreCard');
+  if (restoreBtn) restoreBtn.onclick = ()=>{ ta.value = load(STORE_CARD_BAK) || ta.value; msg(); };
+  document.getElementById('saveCard').onclick = ()=>{ cardText = ta.value; hands = parseCard(cardText).hands; saveCard(cardText); closeSheet(); render(); };
 }
 document.getElementById('openRules').onclick = ()=>openRules();
 document.getElementById('openCard').onclick = openCard;
@@ -277,7 +292,15 @@ function miniHand(v, counts){
   return `<div class="mini">${out.join('')}</div>`;
 }
 
+// Card button shows ✓ when a real (imported or typed) card is loaded, not the sample
+function updateCardBtn(){
+  const mine = !isSample(cardText) && hands.length > 0, b = document.getElementById('openCard');
+  b.classList.toggle('loaded', mine);
+  b.innerHTML = mine ? '🃏 Card <span class="chk">✓</span>' : '🃏 Card';
+  b.setAttribute('aria-label', mine ? 'Card (your card loaded)' : 'Card (sample, import yours)');
+}
 function render(){
+  updateCardBtn();
   rack.sort((a,b)=>ord(a)-ord(b));
   save(STORE_RACK, JSON.stringify(rack));
   save(STORE_EXP, JSON.stringify(exposed));
