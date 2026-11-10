@@ -54,3 +54,81 @@ test('your card parses cleanly', { skip: !require('fs').existsSync(__dirname + '
   const { errors } = parseCard(txt);
   assert.deepStrictEqual(errors, []);
 });
+
+// ---- Calling and exposures (invented hands only) ----
+const { evaluateCall, pickTiles, rankHands } = require('../js/engine.js');
+const evens = parseCard('# Evens\nFF 222a 4444b 666c 88a | 25 X').hands;
+// Everything for Evens except one 6 Crak and the 8 Bam pair
+const nearEvens = ['F','F','B2','B2','B2','D4','D4','D4','D4','C6','C6','N','E'];
+
+test('call: a 6 Crak for a pung you hold two of', () => {
+  const c = evaluateCall(nearEvens, evens, [], 'C6');
+  assert.ok(['good', 'maybe'].includes(c.verdict), c.headline);
+  assert.deepStrictEqual(c.options[0].expose, { tile: 'C6', size: 3, naturals: 3, jokers: 0 });
+  assert.ok(c.options[0].discard && c.options[0].discard !== 'J');
+});
+
+test('call: a joker fills out the exposure', () => {
+  const rack = ['F','F','B2','B2','B2','D4','D4','D4','D4','C6','J','B8','N'];
+  const c = evaluateCall(rack, evens, [], 'C6');
+  assert.deepStrictEqual(c.options[0].expose, { tile: 'C6', size: 3, naturals: 2, jokers: 1 });
+});
+
+test('call: a tile your hands only need as a pair is a no', () => {
+  const c = evaluateCall(nearEvens, evens, [], 'B8');
+  assert.strictEqual(c.verdict, 'no');
+  assert.match(c.headline, /pair\/single/);
+});
+
+test('call: a tile only a concealed hand uses is a no', () => {
+  const { hands } = parseCard('11a 222a 3333a 444a 55a | 30 C');
+  const rack = ['B1','B1','B2','B2','B3','B3','B3','B3','B4','B4','B4','N','E'];
+  const c = evaluateCall(rack, hands, [], 'B2');
+  assert.strictEqual(c.verdict, 'no');
+  assert.match(c.headline, /concealed/);
+});
+
+test('call: Mah Jongg on a pair tile', () => {
+  const rack = ['F','F','B2','B2','B2','D4','D4','D4','D4','C6','C6','C6','B8'];
+  assert.strictEqual(evaluateCall(rack, evens, [], 'B8').verdict, 'mahjong');
+});
+
+test('exposures: only hands with that exact group, and no concealed hands', () => {
+  const { hands } = parseCard(`FF 222a 4444b 666c 88a | 25 X
+FF 2222a 44b 6666c 88a | 25 X
+FF 222a 4444b 666c 88a | 25 C
+NNNN EEE WWW SSSS | 25 X`);
+  const res = analyze(['B2','B2','D4','N','E'], hands, [{ tile: 'C6', size: 3, jokers: 0 }]);
+  assert.deepStrictEqual(res.results.map(r => r.hand.id), [0]);
+  assert.strictEqual(res.pass.length, 1); // with exposures, pick one discard
+  // the exposed group is taken out of what's left to collect
+  assert.strictEqual(res.results[0].variants[0].v.groups.reduce((s, g) => s + g.size, 0), 11);
+});
+
+test('pickTiles(…, 3) matches the Charleston pass', () => {
+  const { hands } = parseCard(`# Evens
+FF 222a 4444b 666c 88a | 25 X
+222a 444a 666a 888a DDa | 25 X
+# Consecutive
+11a 222a 3333a 444a 55a | 30 C shift
+# Odds
+11a 333a 5555b 777b 99c | 25 X`);
+  const rack = ['F','B2','B2','C4','C4','D6','D7','B9','N','E','RD','J','C1'];
+  const picks = pickTiles(rack, rankHands(rack, hands), 3);
+  assert.deepStrictEqual(picks.map(p => p.tile), ['D7', 'B9', 'N']); // recorded before the refactor
+  assert.deepStrictEqual(analyze(rack, hands).pass.map(p => [p.tile, p.why]), picks.map(p => [p.tile, p.why]));
+});
+
+test('call: never a joker, never discard a joker', () => {
+  assert.strictEqual(evaluateCall(nearEvens, evens, [], 'J').verdict, 'no');
+  const jokery = ['J','J','J','J','C6','F','N','E','W','S','RD','GD','B9'];
+  const c = evaluateCall(jokery, evens, [], 'C6');
+  assert.ok(c.options.length);
+  assert.ok(c.options.every(o => o.discard !== 'J'));
+});
+
+test('call: 14 tiles means discard first', () => {
+  const c = evaluateCall(['B2','B2','D4','N','E','W','S','F','F','B9','B9'], evens, [{ tile: 'C6', size: 3, jokers: 0 }], 'B2');
+  assert.strictEqual(c.verdict, 'no');
+  assert.match(c.headline, /Discard first/);
+});

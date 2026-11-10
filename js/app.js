@@ -28,6 +28,7 @@ const RULES = {
     <li><span class="yes">✓</span> Any tile that wins the game</li>
     <li><span class="no">✗</span> A pair or single, unless it wins</li>
     <li><span class="no">✗</span> Concealed (C) hands: only your winning tile</li>
+    <li>🎯 Exposures must match the card exactly: a pung for a pung, a kong for a kong.</li>
     <li>⏱ Call before the next player draws and racks</li>
     <li>🥇 A Mah Jongg call beats an exposure call. A tie goes to whoever is next in turn.</li></ul>`,
   'Charleston': `<ul>
@@ -48,22 +49,30 @@ const RULES = {
     <li>All 4 of a tile gone? Hands needing a pair of it are dead.</li></ul>`
 };
 
-const STORE_CARD = 'mj-card-v1', STORE_RACK = 'mj-rack-v1';
+const STORE_CARD = 'mj-card-v1', STORE_RACK = 'mj-rack-v1', STORE_EXP = 'mj-exposed-v1';
 function load(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
 function save(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
 
 let cardText = load(STORE_CARD) || SAMPLE;
 let rack = []; try { rack = JSON.parse(load(STORE_RACK) || '[]'); } catch(e){ rack = []; }
+// Called groups on the table: [{tile, size, jokers}]
+let exposed = []; try { exposed = JSON.parse(load(STORE_EXP) || '[]'); if (!Array.isArray(exposed)) exposed = []; } catch(e){ exposed = []; }
 let hands = parseCard(cardText).hands;
 let history = [], showAll = false, last = null;
+// Undo restores the rack and exposures together
+const snapshot = () => history.push({ rack: [...rack], exposed: exposed.map(e=>({...e})) });
+const exposedCount = () => exposed.reduce((s,e)=>s+e.size, 0);
+// Tiles of each kind already on the table (exposures), for the 4-of-each limit
+function exposedTiles(){ const c = {}; for (const e of exposed){ c[e.tile]=(c[e.tile]||0)+e.size-e.jokers; c.J=(c.J||0)+e.jokers; } return c; }
+let fx = null, prevPass = '', prevBars = {}, wasMahj = false, removing = false;
 
 const SUIT_SHORT = {B:'BAM',C:'CRAK',D:'DOT'};
 function tileHTML(id, extra='', inner='') {
   let cls='H', n='', s='';
   if (id==='J'){cls='J';n='J';s='JOKER';}
-  else if (id==='F'){n='✿';s='FLOWER';}
-  else if (id==='GD'){cls='B';n='G';s='DRAGON';}
-  else if (id==='RD'){cls='C';n='R';s='DRAGON';}
+  else if (id==='F'){cls='F';n='✿';s='FLOWER';}
+  else if (id==='GD'){cls='B';n='發';s='GREEN';}
+  else if (id==='RD'){cls='C';n='中';s='RED';}
   else if (id==='WD'){cls='D';n='0';s='SOAP';}
   else if ('NEWS'.includes(id)&&id.length===1){n=id;s='WIND';}
   else {cls=id[0];n=id[1];s=SUIT_SHORT[id[0]];}
@@ -160,8 +169,25 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 
 // ---- sheet ----
 const bg = document.getElementById('sheetBg');
-function openSheet(title, html){ document.getElementById('shTitle').textContent = title; document.getElementById('shBody').innerHTML = html; bg.hidden = false; }
-function closeSheet(){ bg.hidden = true; }
+const sheetEl = document.getElementById('sheet');
+function openSheet(title, html){ document.getElementById('shTitle').textContent = title; document.getElementById('shBody').innerHTML = html; sheetEl.style.transform = ''; sheetEl.scrollTop = 0; bg.hidden = false; document.body.classList.add('locked'); }
+function closeSheet(){ bg.hidden = true; document.body.classList.remove('locked'); }
+// Swipe the sheet down to close it
+let swipeY = null, swipeD = 0;
+sheetEl.addEventListener('touchstart', e=>{
+  if (sheetEl.scrollTop > 0 || e.target.closest('textarea,.tabs')) { swipeY = null; return; }
+  swipeY = e.touches[0].clientY; swipeD = 0; sheetEl.style.transition = 'none';
+}, {passive:true});
+sheetEl.addEventListener('touchmove', e=>{
+  if (swipeY === null) return;
+  swipeD = Math.max(0, e.touches[0].clientY - swipeY);
+  sheetEl.style.transform = swipeD ? `translateY(${swipeD}px)` : '';
+}, {passive:true});
+sheetEl.addEventListener('touchend', ()=>{
+  if (swipeY === null) return;
+  sheetEl.style.transition = ''; swipeY = null;
+  if (swipeD > 90) closeSheet(); else sheetEl.style.transform = '';
+});
 bg.addEventListener('click', e=>{ if(e.target===bg) closeSheet(); });
 document.getElementById('shClose').onclick = closeSheet;
 
@@ -215,12 +241,14 @@ function openCard(){
 document.getElementById('openRules').onclick = ()=>openRules();
 document.getElementById('openCard').onclick = openCard;
 
-function buildPicker(){
+// Compact 4-row tile grid (Bam, Crak, Dot, honors), shared by the picker and the Call? sheet
+function tileGrid(withJoker=true){
   const rows = [
     [1,2,3,4,5,6,7,8,9].map(n=>'B'+n), [1,2,3,4,5,6,7,8,9].map(n=>'C'+n),
-    [1,2,3,4,5,6,7,8,9].map(n=>'D'+n), ['GD','RD','WD','N','E','W','S','F','J']];
-  document.getElementById('picker').innerHTML = rows.map(r=>`<div class="row">${r.map(t=>tileHTML(t)).join('')}</div>`).join('');
+    [1,2,3,4,5,6,7,8,9].map(n=>'D'+n), ['GD','RD','WD','N','E','W','S','F',...(withJoker?['J']:[])]];
+  return rows.map(r=>`<div class="row">${r.map(t=>tileHTML(t)).join('')}</div>`).join('');
 }
+function buildPicker(){ document.getElementById('picker').innerHTML = tileGrid(); }
 
 function handTips(h, s){
   const t = [];
@@ -232,6 +260,9 @@ function handTips(h, s){
 
 function miniHand(v, counts){
   const avail = {...counts}; let jk = avail.J||0; const out = [];
+  // Exposed groups first (v.exposed lines up with the exposures list)
+  (v.exposed||[]).forEach((g,k)=>{ const j = (exposed[k]||{}).jokers||0;
+    for (let i=0;i<g.size;i++) out.push(tileHTML(i < g.size-j ? g.tile : 'J', 'xp')); });
   for (const g of v.groups) for (let i=0;i<g.size;i++){
     if (avail[g.tile]>0){avail[g.tile]--; out.push(tileHTML(g.tile));}
     else if (g.size>=3 && jk>0){jk--; out.push(tileHTML('J'));}
@@ -243,66 +274,198 @@ function miniHand(v, counts){
 function render(){
   rack.sort((a,b)=>ord(a)-ord(b));
   save(STORE_RACK, JSON.stringify(rack));
-  document.getElementById('count').textContent = rack.length + (rack.length ? '' : '');
-  const res = (rack.length >= 4 && hands.length) ? analyze(rack, hands) : null;
+  save(STORE_EXP, JSON.stringify(exposed));
+  const xp = exposedCount(), total = rack.length + xp, onTable = exposedTiles();
+  document.getElementById('count').textContent = rack.length;
+  const res = (total >= 4 && hands.length) ? analyze(rack, hands, exposed) : null;
   last = res;
+  const counts = {}; rack.forEach(t=>counts[t]=(counts[t]||0)+1);
+  const playing = exposed.length > 0;
 
+  // Charleston: outline the 3 passes. After a call: outline the discard, only while you hold 14.
   const marks = {};
-  if (res) res.pass.forEach(p=>marks[p.tile]=(marks[p.tile]||0)+1);
-  document.getElementById('rack').innerHTML = rack.length
-    ? rack.map((t,i)=>{ let extra=''; if(marks[t]){extra='pass';marks[t]--;} return tileHTML(t,extra).replace('class="tile','data-i="'+i+'" class="tile'); }).join('')
-    : `<span class="empty">${hands.length ? 'Tap tiles below, or Deal a practice hand' : 'Add your card first (top right)'}</span>`;
+  if (res && (!playing || total >= 14)) res.pass.forEach(p=>marks[p.tile]=(marks[p.tile]||0)+1);
+  const newIdx = fx && fx.type==='add' ? rack.lastIndexOf(fx.id) : -1;
+  const dealing = fx && fx.type==='deal';
+  fx = null;
+  document.getElementById('rack').innerHTML =
+    rack.map((t,i)=>{ let extra='', inner=''; if(marks[t]){extra='pass';marks[t]--; if (playing) inner='<span class="dl">discard</span>';}
+      if (i===newIdx) extra+=' new'; if (dealing) extra+=' deal';
+      return tileHTML(t,extra,inner).replace('class="tile',`data-i="${i}" style="--i:${i}" class="tile`); }).join('')
+    + '<div class="slot"></div>'.repeat(Math.max(0, 14 - total))
+    + (total ? '' : `<span class="empty">${hands.length ? 'Tap tiles below, or 🎲 Practice' : 'Add your card first (top right)'}</span>`);
+
+  document.querySelectorAll('#picker .tile').forEach(el=>{
+    const id = el.dataset.t;
+    el.classList.toggle('maxed', total >= 14 || (counts[id]||0) + (onTable[id]||0) >= maxOf(id));
+  });
+
+  // Exposed groups: mini tiles, separate from the concealed rack. Undo is the way back.
+  const expEl = document.getElementById('exposed');
+  expEl.hidden = !playing;
+  expEl.innerHTML = playing ? `<span class="lbl">Exposed</span>${exposed.map(e=>
+    `<div class="mini">${Array.from({length:e.size},(_,i)=>tileHTML(i < e.size-e.jokers ? e.tile : 'J')).join('')}</div>`).join('')}` : '';
+  document.getElementById('callBtn').hidden = !(hands.length && rack.length);
+  document.getElementById('deal').hidden = total > 0; // Practice only on a clear board
+  document.getElementById('passLbl').textContent = playing ? 'Discard' : 'Pass';
 
   document.getElementById('results').hidden = !res;
-  if (!res) return;
+  if (!res) { prevPass = ''; prevBars = {}; wasMahj = false; return; }
 
-  document.getElementById('pass').innerHTML = res.pass.map((p,i)=>tileHTML(p.tile,'',`<span class="q">?</span>`).replace('class="tile','data-p="'+i+'" class="tile')).join('');
+  const sig = res.pass.map(p=>p.tile).join();
+  const flip = sig !== prevPass; prevPass = sig;
+  document.getElementById('pass').innerHTML = res.pass.map((p,i)=>tileHTML(p.tile, flip?'flip':'', `<span class="q">?</span>`).replace('class="tile',`data-p="${i}" style="--i:${i}" class="tile`)).join('');
   document.getElementById('keep').innerHTML = res.keepers.length
     ? `<span class="lbl">Keep</span><div class="mini">${res.keepers.map(k=>tileHTML(k.tile)).join('')}</div>` : '';
   document.getElementById('keep').hidden = !res.keepers.length;
 
-  document.getElementById('lean').innerHTML = res.sections.slice(0,3).map(s=>{
+  const leanEl = document.getElementById('lean'), bars = {};
+  leanEl.innerHTML = res.sections.slice(0,3).map(s=>{
     const pct = Math.max(4, Math.round(100*(14 - s.missing)/14));
-    return `<div><div class="leanitem"><span>${esc(s.section)}</span><span>${s.missing} away</span></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+    bars[s.section] = pct;
+    return `<div><div class="leanitem"><span>${esc(s.section)}</span>${awayChip(s.missing)}</div><div class="bar"><i style="width:${prevBars[s.section] ?? 0}%" data-w="${pct}"></i></div></div>`;
   }).join('');
+  void leanEl.offsetWidth; // let the bars animate from their old width
+  leanEl.querySelectorAll('.bar i').forEach(i=>i.style.width = i.dataset.w + '%');
+  prevBars = bars;
   document.getElementById('tipBtn').hidden = !coachTips(res).length;
 
-  const counts = {}; rack.forEach(t=>counts[t]=(counts[t]||0)+1);
   const list = res.results.slice(0, showAll ? 8 : 3);
   document.getElementById('hands').innerHTML = list.map((r,i)=>{
     const {v,s} = r.variants[0];
     const hasTips = handTips(r.hand, s).length;
-    return `<button class="hand" data-h="${i}"><div class="top"><b>${esc(r.hand.section)}${hasTips?'<span class="dot"></span>':''}</b><span>${r.missing} away</span></div><div class="line">${printedHTML(r.hand, v.ai)}${(()=>{const y=concreteText(r.hand.altTexts[v.ai], v), p=plainText(r.hand.altTexts[r.hand.printedIdx[v.ai]]); return y!==p?` <span class="yours">→ ${esc(y)}</span>`:'';})()}</div>${miniHand(v,counts)}</button>`;
+    return `<button class="hand" data-h="${i}"><div class="top"><b>${esc(r.hand.section)} <span class="lnum">line ${r.hand.line}</span>${hasTips?'<span class="dot"></span>':''}</b>${awayChip(r.missing)}</div><div class="line">${printedHTML(r.hand, v.ai)}${(()=>{const y=concreteText(r.hand.altTexts[v.ai], v), p=plainText(r.hand.altTexts[r.hand.printedIdx[v.ai]]); return y!==p?` <span class="yours">→ ${esc(y)}</span>`:'';})()}</div>${miniHand(v,counts)}</button>`;
   }).join('');
   document.getElementById('moreBtn').textContent = showAll ? 'Show less' : 'Show more';
   document.getElementById('moreBtn').hidden = res.results.length <= 3;
+
+  const mahj = !!(res.results[0] && res.results[0].missing === 0);
+  if (mahj && !wasMahj) celebrate();
+  wasMahj = mahj;
+}
+
+function awayChip(m){
+  return m === 0 ? '<span class="away a0">Mah Jongg!</span>' : `<span class="away a${Math.min(m,3)}">${m} away</span>`;
+}
+const maxOf = id => (id==='J'||id==='F') ? 8 : 4;
+
+function celebrate(){
+  try { if (matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch(e){}
+  const colors = ['#23824f','#c8312b','#2a5db0','#f2b632','#c2457a'];
+  let html = '<div class="mj">Mah Jongg! 🎉</div>';
+  for (let i=0;i<70;i++) html += `<i style="left:${Math.random()*100}%;background:${colors[i%5]};animation-delay:${(Math.random()*.5).toFixed(2)}s;--x:${Math.round((Math.random()*2-1)*90)}px;--r:${Math.round(Math.random()*900)}deg"></i>`;
+  const box = document.createElement('div'); box.className = 'party'; box.innerHTML = html;
+  document.body.appendChild(box);
+  setTimeout(()=>box.remove(), 2600);
 }
 
 function coachTips(res){
   const best = res.results[0], tips = [];
+  if (!best) return exposed.length ? ['No hand on your card fits what you’ve exposed. Undo if that was a mistake.'] : [];
   if (res.flexible >= 4) tips.push(`${res.flexible} hands are within 2 tiles of your best. Stay flexible.`);
   else if (res.flexible <= 2 && best.missing <= 6) tips.push(`Only ${res.flexible===1?'one hand is':'a couple of hands are'} close. Start committing to <b>${esc(best.hand.section)}</b>.`);
   if (res.jokers >= 2) tips.push(`${res.jokers} jokers: favor hands with big groups.`);
-  if (rack.length === 14) tips.push('14 tiles means you’re East. You discard first.');
+  if (rack.length === 14 && !exposed.length) tips.push('14 tiles means you’re East. You discard first.');
   return tips;
+}
+
+// ---- Should I call it? ----
+const VERDICT = {
+  mahjong: ['🟢', 'Call it: Mah Jongg!', 'v-mj'],
+  good:    ['🟢', 'Good call', 'v-good'],
+  maybe:   ['🟡', 'Maybe', 'v-maybe'],
+  no:      ['🔴', 'Don’t call', 'v-no'],
+};
+const GROUP = {3:'pung', 4:'kong', 5:'quint', 6:'sextet'};
+const handName = r => plainText(r.hand.altTexts[r.hand.printedIdx[r.variants[0].v.ai]]);
+const exposeTiles = e => Array.from({length:e.size}, (_,i)=>tileHTML(i < e.naturals ? e.tile : 'J')).join('');
+
+function openCall(){
+  if (rack.length + exposedCount() >= 14) {
+    openSheet('Call?', `<p>You have 14 tiles. Discard first.</p><div class="vbtns"><button class="pill" id="cClose">Close</button></div>`);
+    document.getElementById('cClose').onclick = closeSheet;
+    return;
+  }
+  openSheet('Which tile was discarded?', `<div class="picker callgrid">${tileGrid(false)}</div>`);
+  const seen = {...exposedTiles()}; rack.forEach(t=>seen[t]=(seen[t]||0)+1);
+  const grid = document.querySelector('#shBody .callgrid');
+  grid.querySelectorAll('.tile').forEach(el=>el.classList.toggle('maxed', (seen[el.dataset.t]||0) >= maxOf(el.dataset.t)));
+  grid.onclick = e=>{ const t = e.target.closest('.tile'); if (t && !t.classList.contains('maxed')) showVerdict(t.dataset.t); };
+}
+
+function showVerdict(tile, oi=0){
+  const c = evaluateCall(rack, hands, exposed, tile);
+  const [icon, label, cls] = VERDICT[c.verdict];
+  const o = c.options[oi];
+  const rows = [];
+  if (c.verdict === 'mahjong') rows.push(['Expose', 'Your whole hand']);
+  else if (o && c.verdict !== 'no') {
+    rows.push(['Expose', `<div class="mini">${exposeTiles(o.expose)}</div>`]);
+    const kept = o.helps.filter(x=>x.after!==null);
+    rows.push(['Keeps', kept.length === 1 ? `Commits you to <b>${esc(handName(kept[0].result))}</b>`
+      : `Keeps ${kept.length} of your ${o.closeTotal} close hands`]);
+    if (o.discard) rows.push(['Then discard', `<div class="mini">${tileHTML(o.discard)}</div>`]);
+  }
+
+  // Details: affected hands (printed line, note, "You'd play it as…"), other options, rule reminders
+  const handBlock = (r, chip) => { const v = r.variants[0].v, why = whyList(r.hand, v);
+    return `<div class="aff"><div class="top"><b>${esc(r.hand.section)}</b>${chip}</div>
+      <div class="line">${printedHTML(r.hand, v.ai)}</div>${r.hand.note?`<div class="noteline">(${esc(r.hand.note)})</div>`:''}
+      ${why.length?`<ul>${why.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}</div>`; };
+  let det = '';
+  if (c.win) det += `<div class="lbl2">Your hand</div>${handBlock(c.win, awayChip(0))}`;
+  if (o) det += `<div class="lbl2">Your close hands</div>` + o.helps.slice(0,5).map(x=>handBlock(x.result,
+    x.after===null ? '<span class="away">dropped</span>' : `<span class="away a${Math.min(x.after,3)}">${x.before} → ${x.after}</span>`)).join('');
+  if (c.options.length > 1) det += `<div class="lbl2">Other ways to expose</div><div class="vbtns">${c.options.map((x,i)=>i===oi?'':
+    `<button class="pill sm" data-oi="${i}">${esc(tileLabel(tile))} ${GROUP[x.expose.size]||'group'} · ${x.after} away</button>`).join('')}</div>`;
+  if (c.reasons.length) det += `<div class="lbl2">Rules</div><ul>${c.reasons.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`;
+
+  const canRecord = c.verdict === 'mahjong' || !!o;
+  openSheet('Call?', `
+    <div class="verdict"><div class="big">${tileHTML(tile)}</div>
+      <div><span class="badge ${cls}">${icon} ${label}</span><div class="vhead">${esc(c.headline)}</div></div></div>
+    ${rows.map(([k,v])=>`<div class="vrow"><span class="vk">${k}</span><span class="vv">${v}</span></div>`).join('')}
+    <div class="vbtns">${canRecord?`<button class="pill accent" id="cDid">${c.verdict==='mahjong'?'I called it 🎉':'I called it'}</button>`:''}
+      <button class="pill" id="cAgain">Pick another tile</button><button class="pill" id="cClose">Close</button></div>
+    ${det?`<button class="dtoggle" id="cDet">Details ▾</button><div id="cDetails" hidden>${det}</div>`:''}`);
+  if (canRecord) document.getElementById('cDid').onclick = ()=>recordCall(tile, c.verdict==='mahjong' ? null : o.expose);
+  document.getElementById('cAgain').onclick = openCall;
+  document.getElementById('cClose').onclick = closeSheet;
+  const dt = document.getElementById('cDet');
+  if (dt) dt.onclick = ()=>{ const d = document.getElementById('cDetails'); d.hidden = !d.hidden; dt.textContent = d.hidden ? 'Details ▾' : 'Details ▴'; };
+  document.querySelectorAll('#cDetails [data-oi]').forEach(b=>b.onclick = ()=>showVerdict(tile, +b.dataset.oi));
+}
+
+// Record the call: Mah Jongg takes the tile; an exposure moves its naturals and jokers out of the rack
+function recordCall(tile, e){
+  snapshot();
+  if (!e) rack.push(tile);
+  else {
+    for (let i=0;i<e.naturals-1;i++) rack.splice(rack.indexOf(tile), 1);
+    for (let i=0;i<e.jokers;i++) rack.splice(rack.indexOf('J'), 1);
+    exposed.push({ tile, size: e.size, jokers: e.jokers });
+  }
+  closeSheet(); render();
 }
 
 // ---- events ----
 document.getElementById('picker').addEventListener('click', e=>{
   const t = e.target.closest('.tile'); if(!t) return;
   const id = t.dataset.t;
-  if (rack.length >= 14) return;
-  if (rack.filter(x=>x===id).length >= (id==='J'||id==='F'?8:4)) return;
-  history.push([...rack]); rack.push(id); render();
+  if (rack.length + exposedCount() >= 14 || rack.filter(x=>x===id).length + (exposedTiles()[id]||0) >= maxOf(id)) {
+    t.classList.remove('nope'); void t.offsetWidth; t.classList.add('nope'); return;
+  }
+  snapshot(); rack.push(id); fx = {type:'add', id}; render();
 });
 document.getElementById('rack').addEventListener('click', e=>{
-  const t = e.target.closest('.tile'); if(!t || t.dataset.i===undefined) return;
-  history.push([...rack]); rack.splice(+t.dataset.i,1); render();
+  const t = e.target.closest('.tile'); if(!t || t.dataset.i===undefined || removing) return;
+  removing = true; t.classList.add('out');
+  setTimeout(()=>{ snapshot(); rack.splice(+t.dataset.i,1); removing = false; render(); }, 130);
 });
 document.getElementById('pass').addEventListener('click', e=>{
   const t = e.target.closest('.tile'); if(!t||!last) return;
   const p = last.pass[+t.dataset.p];
-  openSheet('Why pass this?', `<div class="big" style="margin-bottom:6px">${tileHTML(p.tile)}</div><p>${esc(p.why)}</p>${p.warn?`<div class="warn">⚠️ ${esc(p.warn)}</div>`:''}`);
+  openSheet(exposed.length ? 'Why discard this?' : 'Why pass this?', `<div class="big" style="margin-bottom:6px">${tileHTML(p.tile)}</div><p>${esc(p.why)}</p>${p.warn?`<div class="warn">⚠️ ${esc(p.warn)}</div>`:''}`);
 });
 document.getElementById('hands').addEventListener('click', e=>{
   const b = e.target.closest('.hand'); if(!b||!last) return;
@@ -310,7 +473,7 @@ document.getElementById('hands').addEventListener('click', e=>{
   const counts = {}; rack.forEach(t=>counts[t]=(counts[t]||0)+1);
   const meta = [h.points!=null?h.points+' pts':null, h.concealed?'Concealed':'Exposed', r.missing+' away'].filter(Boolean).join(' · ');
   const tips = handTips(h, s), why = whyList(h, v);
-  openSheet(h.section, `<div class="cardline">${printedHTML(h, v.ai)}${h.note?`<div class="noteline">(${esc(h.note)})</div>`:''}<div class="help">${meta}</div></div>
+  openSheet(`${h.section} · line ${h.line}`, `<div class="cardline">${printedHTML(h, v.ai)}${h.note?`<div class="noteline">(${esc(h.note)})</div>`:''}<div class="help">${meta}</div></div>
     <div class="lbl2">Your version</div>${miniHand(v,counts)}<div class="help" style="margin-top:4px">Faded = still needed</div>
     ${why.length?`<div class="lbl2">Why it counts</div><ul>${why.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}
     ${tips.length?`<div class="lbl2">Tips</div><ul>${tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}`);
@@ -325,8 +488,9 @@ function dealHand(){
   for (let i=wall.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [wall[i],wall[j]]=[wall[j],wall[i]]; }
   return wall.slice(0,13);
 }
-document.getElementById('deal').onclick = ()=>{ history.push([...rack]); rack = dealHand(); render(); };
-document.getElementById('undo').onclick = ()=>{ if(history.length){ rack = history.pop(); render(); } };
-document.getElementById('clear').onclick = ()=>{ if(rack.length){ history.push([...rack]); rack=[]; render(); } };
+document.getElementById('deal').onclick = ()=>{ snapshot(); rack = dealHand(); exposed = []; fx = {type:'deal'}; render(); };
+document.getElementById('undo').onclick = ()=>{ if(history.length){ const h = history.pop(); rack = h.rack; exposed = h.exposed; render(); } };
+document.getElementById('clear').onclick = ()=>{ if(rack.length || exposed.length){ snapshot(); rack=[]; exposed=[]; render(); } };
+document.getElementById('callBtn').onclick = openCall;
 
 buildPicker(); render();

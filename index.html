@@ -2,9 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#f7f3ec">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rack Helper">
+<meta name="theme-color" content="#1d6a4c">
 <title>Mahjong Rack Helper</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -12,20 +15,21 @@
 <main>
 <header>
   <h1>🀄 Rack Helper</h1>
-  <div class="btns"><button class="pill" id="openRules">Rules</button><button class="pill" id="openCard">Card</button></div>
+  <div class="btns"><button class="pill" id="openRules">📖 Rules</button><button class="pill" id="openCard">🃏 Card</button></div>
 </header>
 
-<section>
-  <div class="hd"><h2>Rack · <span id="count">0</span></h2>
-    <div class="btns"><button class="pill sm accent" id="deal">Deal</button><button class="pill sm" id="undo">Undo</button><button class="pill sm" id="clear">Clear</button></div></div>
+<section class="rackbox">
+  <div class="hd"><h2>Rack <span class="count" id="count">0</span></h2>
+    <div class="btns"><button class="pill sm accent" id="deal">🎲 Practice</button><button class="pill sm" id="undo" aria-label="Undo">↩︎</button><button class="pill sm" id="clear">Clear</button></div></div>
   <div class="rack" id="rack"></div>
+  <div class="exposed" id="exposed" hidden></div>
 </section>
 
 <section class="picker" id="picker"></section>
 
 <div id="results">
-<section>
-  <div class="hd"><h2>Pass</h2></div>
+<section class="passbox">
+  <div class="hd"><h2><span id="passLbl">Pass</span> <span class="arrow">➜</span></h2></div>
   <div class="passrow"><div class="passrow big" id="pass"></div><div class="keep" id="keep"></div></div>
 </section>
 
@@ -41,6 +45,7 @@
 </section>
 </div>
 </main>
+<button class="fab" id="callBtn" hidden aria-label="Should I call it?">📣<span>Call?</span></button>
 
 <div class="bg" id="sheetBg" hidden><div class="sheet" id="sheet">
   <div class="sh-head"><b id="shTitle"></b><button class="x" id="shClose" aria-label="Close">✕</button></div>
