@@ -1,4 +1,4 @@
-# Mahjong Rack Helper
+# Mahjong Rack Helper - Charles
 
 Tap in your American mahjong rack and get Charleston pass suggestions, the card sections you're closest to, and quick rules.
 

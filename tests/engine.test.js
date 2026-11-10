@@ -132,3 +132,57 @@ test('call: 14 tiles means discard first', () => {
   assert.strictEqual(c.verdict, 'no');
   assert.match(c.headline, /Discard first/);
 });
+
+// ---- Rack heatmap (invented hands only) ----
+const { sectionHeat } = require('../js/engine.js');
+const heatCard = parseCard(`# Winds
+NNNN EEEE WWW SSS | 25 X
+# Mixed
+FFFF NNNN RRR GGG | 25 X
+# Soap
+FFFF 0000 RRR GGG | 25 X
+# Far
+111a 222a 333a 444a 55a | 25 X`).hands;
+const heatRack = ['N','N','E','E','W','S','F','F','RD','GD','B9','J'];
+const heatOf = rack => analyze(rack, heatCard).heat;
+const secsOf = (heat, tile, idx = 0) => heat.copies.find(c => c.tile === tile && c.idx === idx).secs;
+
+test('heat: a tile two sections use gets both', () => {
+  const heat = heatOf(heatRack);
+  assert.deepStrictEqual(heat.sections.map(s => s.section), ['Winds', 'Mixed', 'Soap']);
+  assert.deepStrictEqual(secsOf(heat, 'N'), [0, 1]);
+  assert.deepStrictEqual(secsOf(heat, 'F'), [1, 2]);
+  assert.deepStrictEqual(secsOf(heat, 'RD'), [1, 2]);
+});
+
+test('heat: extra copies beyond what the best hand needs get no dot', () => {
+  const { hands } = parseCard('# Pairs\nNN EEEE WWWW SSSS | 25 X');
+  const heat = analyze(['N','N','N','E','W'], hands).heat;
+  assert.deepStrictEqual([0, 1, 2].map(i => secsOf(heat, 'N', i)), [[0], [0], []]);
+});
+
+test('heat: a tile no top section uses is dead', () => {
+  assert.deepStrictEqual(secsOf(heatOf(heatRack), 'B9'), []);
+});
+
+test('heat: jokers fit any section', () => {
+  const heat = heatOf(['J', ...heatRack, 'J']);
+  assert.ok(heat.copies.filter(c => c.tile === 'J').every(c => c.secs === 'any'));
+  assert.strictEqual(heat.copies.filter(c => c.tile === 'J').length, 3);
+});
+
+test('heat: sections more than best+4 away are left out', () => {
+  const heat = heatOf(heatRack);
+  assert.ok(!heat.sections.some(s => s.section === 'Far'));
+  // direct call with a cutoff that keeps only the closest
+  const res = analyze(heatRack, heatCard);
+  const only = sectionHeat(heatRack, res.results, res.sections, 1);
+  assert.deepStrictEqual(only.sections.map(s => s.section), ['Winds']);
+});
+
+test('heat: copies follow the rack order with stable copy indices', () => {
+  const heat = heatOf(heatRack);
+  assert.deepStrictEqual(heat.copies.map(c => c.tile), heatRack);
+  assert.deepStrictEqual(heat.copies.filter(c => c.tile === 'N').map(c => c.idx), [0, 1]);
+  assert.deepStrictEqual(heat.copies.filter(c => c.tile === 'E').map(c => c.idx), [0, 1]);
+});

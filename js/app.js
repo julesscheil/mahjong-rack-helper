@@ -65,6 +65,8 @@ const exposedCount = () => exposed.reduce((s,e)=>s+e.size, 0);
 // Tiles of each kind already on the table (exposures), for the 4-of-each limit
 function exposedTiles(){ const c = {}; for (const e of exposed){ c[e.tile]=(c[e.tile]||0)+e.size-e.jokers; c.J=(c.J||0)+e.jokers; } return c; }
 let fx = null, prevPass = '', prevBars = {}, wasMahj = false, removing = false;
+// Heatmap focus: a section name, or null. A temporary view: cleared whenever the rack, exposures or card change.
+let focusSection = null, focusSig = '';
 
 const SUIT_SHORT = {B:'BAM',C:'CRAK',D:'DOT'};
 function tileHTML(id, extra='', inner='') {
@@ -73,8 +75,9 @@ function tileHTML(id, extra='', inner='') {
   else if (id==='F'){cls='F';n='✿';s='FLOWER';}
   else if (id==='GD'){cls='B';n='發';s='GREEN';}
   else if (id==='RD'){cls='C';n='中';s='RED';}
-  else if (id==='WD'){cls='D';n='0';s='SOAP';}
+  else if (id==='WD'){cls='D soap';n='<i>0</i>';s='SOAP';}
   else if ('NEWS'.includes(id)&&id.length===1){n=id;s='WIND';}
+  else if (id==='B1'){cls='B bird';n='🦚';s='BAM';inner='<span class="ix">1</span>'+inner;}
   else {cls=id[0];n=id[1];s=SUIT_SHORT[id[0]];}
   return `<div class="tile ${cls} ${extra}" data-t="${id}"><span class="n">${n}</span><span class="s">${s}</span>${inner}</div>`;
 }
@@ -171,7 +174,9 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 // ---- sheet ----
 const bg = document.getElementById('sheetBg');
 const sheetEl = document.getElementById('sheet');
-function openSheet(title, html){ document.getElementById('shTitle').textContent = title; document.getElementById('shBody').innerHTML = html; sheetEl.style.transform = ''; sheetEl.scrollTop = 0; bg.hidden = false; document.body.classList.add('locked'); }
+// secDot: optional heatmap section index, shown as a colored dot before the title
+function openSheet(title, html, secDot){ const st = document.getElementById('shTitle'); st.textContent = title;
+  if (secDot != null) st.insertAdjacentHTML('afterbegin', `<span class="sd k${secDot}"></span>`); document.getElementById('shBody').innerHTML = html; sheetEl.style.transform = ''; sheetEl.scrollTop = 0; bg.hidden = false; document.body.classList.add('locked'); }
 function closeSheet(){ bg.hidden = true; document.body.classList.remove('locked'); }
 // Swipe the sheet down to close it
 let swipeY = null, swipeD = 0;
@@ -289,10 +294,15 @@ function render(){
   const newIdx = fx && fx.type==='add' ? rack.lastIndexOf(fx.id) : -1;
   const dealing = fx && fx.type==='deal';
   fx = null;
+  const sig = JSON.stringify([rack, exposed, cardText]);
+  if (sig !== focusSig) { focusSection = null; focusSig = sig; }
+  // Which top sections use each tile copy (copies line up with the sorted rack), for tap-to-focus
+  const heat = res && res.heat.sections.length ? res.heat : null;
   document.getElementById('rack').innerHTML =
     rack.map((t,i)=>{ let extra='', inner=''; if(marks[t]){extra='pass';marks[t]--; if (playing) inner='<span class="dl">discard</span>';}
       if (i===newIdx) extra+=' new'; if (dealing) extra+=' deal';
-      return tileHTML(t,extra,inner).replace('class="tile',`data-i="${i}" style="--i:${i}" class="tile`); }).join('')
+      const c = heat && heat.copies[i], secs = !c ? '' : c.secs === 'any' ? 'any' : c.secs.join(' ');
+      return tileHTML(t,extra,inner).replace('class="tile',`data-i="${i}" data-secs="${secs}" style="--i:${i}" class="tile`); }).join('')
     + '<div class="slot"></div>'.repeat(Math.max(0, 14 - total))
     + (total ? '' : `<span class="empty">${hands.length ? 'Tap tiles below, or 🎲 Practice' : 'Add your card first (top right)'}</span>`);
 
@@ -315,19 +325,24 @@ function render(){
   document.getElementById('results').hidden = !res;
   if (!res) { prevPass = ''; prevBars = {}; wasMahj = false; return; }
 
-  const sig = res.pass.map(p=>p.tile).join();
-  const flip = sig !== prevPass; prevPass = sig;
+  const psig = res.pass.map(p=>p.tile).join();
+  const flip = psig !== prevPass; prevPass = psig;
   document.getElementById('pass').innerHTML = res.pass.map((p,i)=>tileHTML(p.tile, flip?'flip':'', `<span class="q">?</span>`).replace('class="tile',`data-p="${i}" style="--i:${i}" class="tile`)).join('');
   document.getElementById('keep').innerHTML = res.keepers.length
     ? `<span class="lbl">Keep</span><div class="mini">${res.keepers.map(k=>tileHTML(k.tile)).join('')}</div>` : '';
   document.getElementById('keep').hidden = !res.keepers.length;
 
   const leanEl = document.getElementById('lean'), bars = {};
-  leanEl.innerHTML = res.sections.slice(0,3).map(s=>{
+  const nHeat = heat ? heat.sections.length : 0; // heat sections are the first nHeat of these
+  leanEl.innerHTML = res.sections.slice(0,3).map((s,k)=>{
     const pct = Math.max(4, Math.round(100*(14 - s.missing)/14));
     bars[s.section] = pct;
-    return `<div><div class="leanitem"><span>${esc(s.section)}</span>${awayChip(s.missing)}</div><div class="bar"><i style="width:${prevBars[s.section] ?? 0}%" data-w="${pct}"></i></div></div>`;
+    const inner = `<div class="leanitem"><span>${k<nHeat?`<span class="sd k${k}"></span>`:''}${esc(s.section)}</span>${awayChip(s.missing)}</div><div class="bar"><i class="${k<nHeat?'k'+k:''}" style="width:${prevBars[s.section] ?? 0}%" data-w="${pct}"></i></div>`;
+    return k < nHeat
+      ? `<button class="leanrow" data-k="${k}" aria-pressed="false" aria-label="Focus ${esc(s.section)}, ${s.missing} away">${inner}</button>`
+      : `<div class="leanrow">${inner}</div>`;
   }).join('');
+  applyFocus();
   void leanEl.offsetWidth; // let the bars animate from their old width
   leanEl.querySelectorAll('.bar i').forEach(i=>i.style.width = i.dataset.w + '%');
   prevBars = bars;
@@ -346,6 +361,26 @@ function render(){
   if (mahj && !wasMahj) celebrate();
   wasMahj = mahj;
 }
+
+// Fade rack tiles the focused section doesn't use (jokers never fade), and mark its bar
+function applyFocus(){
+  const k = last && last.heat ? last.heat.sections.findIndex(x=>x.section===focusSection) : -1;
+  if (k < 0) focusSection = null;
+  document.querySelectorAll('#rack .tile').forEach(el=>{
+    const secs = el.dataset.secs;
+    el.classList.toggle('unfocused', k >= 0 && secs !== 'any' && !secs.split(' ').includes(String(k)));
+  });
+  document.querySelectorAll('#lean button.leanrow').forEach(b=>{
+    const on = +b.dataset.k === k;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', on);
+  });
+}
+document.getElementById('lean').addEventListener('click', e=>{
+  const b = e.target.closest('button.leanrow'); if (!b || !last) return;
+  const name = last.heat.sections[+b.dataset.k].section;
+  focusSection = focusSection === name ? null : name;
+  applyFocus();
+});
 
 function awayChip(m){
   return m === 0 ? '<span class="away a0">Mah Jongg!</span>' : `<span class="away a${Math.min(m,3)}">${m} away</span>`;
@@ -476,10 +511,11 @@ document.getElementById('hands').addEventListener('click', e=>{
   const counts = {}; rack.forEach(t=>counts[t]=(counts[t]||0)+1);
   const meta = [h.points!=null?h.points+' pts':null, h.concealed?'Concealed':'Exposed', r.missing+' away'].filter(Boolean).join(' · ');
   const tips = handTips(h, s), why = whyList(h, v);
+  const k = last.heat.sections.findIndex(x=>x.section===h.section);
   openSheet(`${h.section} · line ${h.line}`, `<div class="cardline">${printedHTML(h, v.ai)}${h.note?`<div class="noteline">(${esc(h.note)})</div>`:''}<div class="help">${meta}</div></div>
     <div class="lbl2">Your version</div>${miniHand(v,counts)}<div class="help" style="margin-top:4px">Faded = still needed</div>
     ${why.length?`<div class="lbl2">Why it counts</div><ul>${why.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}
-    ${tips.length?`<div class="lbl2">Tips</div><ul>${tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}`);
+    ${tips.length?`<div class="lbl2">Tips</div><ul>${tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}`, k >= 0 ? k : null);
 });
 document.getElementById('tipBtn').onclick = ()=>{ if(last) openSheet('Tip', `<ul>${coachTips(last).map(t=>`<li>${t}</li>`).join('')}</ul>`); };
 document.getElementById('moreBtn').onclick = ()=>{ showAll=!showAll; render(); };

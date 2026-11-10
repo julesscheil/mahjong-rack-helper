@@ -348,7 +348,35 @@ function analyze(rack, hands, exposures = []) {
   }
   const sectionList = Object.values(sections).sort((a, b) => a.missing - b.missing);
 
-  return { results, pass, copies, keepers, flexible, jokers: counts.J || 0, sections: sectionList };
+  const heat = sectionHeat(rack, results, sectionList);
+  return { results, pass, copies, keepers, flexible, jokers: counts.J || 0, sections: sectionList, heat };
+}
+
+// ---- Rack heatmap ----
+// Which of the top k sections use each rack tile copy (in the rack order given).
+// A section's "use" is the union of its tied best hands' best variants, so the i-th copy
+// of a tile counts only if some best variant uses more than i of it. Sections more than
+// best+4 away are left out. Jokers fit anything: secs = 'any'.
+function sectionHeat(rack, results, sections, k = 3) {
+  const best = sections.length ? sections[0].missing : 0;
+  const top = sections.filter(s => s.missing <= best + 4).slice(0, k);
+  const need = top.map(sec => {
+    const u = {};
+    for (const r of results) {
+      if (r.hand.section !== sec.section || r.missing !== sec.missing) continue;
+      for (const { s } of r.variants) for (const [t, n] of Object.entries(s.used)) u[t] = Math.max(u[t] || 0, n);
+    }
+    return u;
+  });
+  const seen = {};
+  const copies = rack.map(t => {
+    const idx = seen[t] = (seen[t] ?? -1) + 1;
+    if (t === 'J') return { tile: t, idx, secs: 'any' };
+    const secs = [];
+    need.forEach((u, si) => { if ((u[t] || 0) > idx) secs.push(si); });
+    return { tile: t, idx, secs };
+  });
+  return { sections: top.map(s => ({ section: s.section, missing: s.missing })), copies };
 }
 
 // ---- Should I call it? ----
@@ -464,4 +492,4 @@ function evaluateCall(rack, hands, exposures = [], tile) {
   return out('maybe', why, options);
 }
 
-if (typeof module !== 'undefined') module.exports = { parseCard, expandHand, analyze, rankHands, pickTiles, evaluateCall, applyExposures, tileLabel, plainText };
+if (typeof module !== 'undefined') module.exports = { parseCard, expandHand, analyze, rankHands, pickTiles, sectionHeat, evaluateCall, applyExposures, tileLabel, plainText };
