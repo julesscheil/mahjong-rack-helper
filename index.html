@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f7f3ec">
+<title>Mahjong Rack Helper</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<main>
+<header>
+  <h1>🀄 Rack Helper</h1>
+  <div class="btns"><button class="pill" id="openRules">Rules</button><button class="pill" id="openCard">Card</button></div>
+</header>
+
+<section>
+  <div class="hd"><h2>Rack · <span id="count">0</span></h2>
+    <div class="btns"><button class="pill sm accent" id="deal">Deal</button><button class="pill sm" id="undo">Undo</button><button class="pill sm" id="clear">Clear</button></div></div>
+  <div class="rack" id="rack"></div>
+</section>
+
+<section class="picker" id="picker"></section>
+
+<div id="results">
+<section>
+  <div class="hd"><h2>Pass</h2></div>
+  <div class="passrow"><div class="passrow big" id="pass"></div><div class="keep" id="keep"></div></div>
+</section>
+
+<section>
+  <div class="hd"><h2>Lean toward</h2><button class="pill sm" id="tipBtn" hidden>💡 Tip</button></div>
+  <div class="lean" id="lean"></div>
+</section>
+
+<section>
+  <div class="hd"><h2>Closest hands</h2></div>
+  <div id="hands"></div>
+  <button class="pill sm more" id="moreBtn">Show more</button>
+</section>
+</div>
+</main>
+
+<div class="bg" id="sheetBg" hidden><div class="sheet" id="sheet">
+  <div class="sh-head"><b id="shTitle"></b><button class="x" id="shClose" aria-label="Close">✕</button></div>
+  <div id="shBody"></div>
+</div></div>
+<script src="js/engine.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

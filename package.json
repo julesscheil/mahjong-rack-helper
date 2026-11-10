@@ -1,0 +1,10 @@
+{
+  "name": "mahjong-rack-helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "American mahjong rack helper: Charleston pass suggestions and hand matching",
+  "scripts": {
+    "test": "node --test",
+    "start": "npx serve ."
+  }
+}
